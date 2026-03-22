@@ -28,6 +28,7 @@ import {
   chainIsSvm,
 } from "../utils";
 import { RelayerClients } from "./RelayerClientHelper";
+import { metrics } from "../custom/metrics";
 import { RelayerConfig } from "./RelayerConfig";
 import { MultiCallerClient } from "../clients";
 
@@ -698,6 +699,7 @@ export class Relayer {
     const [originChain, destChain] = [getNetworkName(originChainId), getNetworkName(destinationChainId)];
 
     if (isDefined(this.pendingTxnHashes[destinationChainId])) {
+      metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "pending_tx" });
       this.logger.info({
         at: "Relayer::evaluateFill",
         message: `${destChain} transaction queue has pending fills; skipping ${originChain} deposit ${depositId.toString()}...`,
@@ -719,6 +721,7 @@ export class Relayer {
       // If we're in simulation mode, skip this early exit so that the user can evaluate
       // the full simulation run.
       if (this.config.sendingTransactionsEnabled) {
+        metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "skipped" });
         return;
       }
     }
@@ -733,6 +736,7 @@ export class Relayer {
         });
         this.requestSlowFill(deposit);
       }
+      metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "slow_fill" });
       return;
     }
 
@@ -789,12 +793,16 @@ export class Relayer {
 
       // Limit the ability of persistently-unprofitable deposits to congest the deposit/fill evaluation pipeline.
       if (!isProfitable) {
+        metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "unprofitable" });
+        metrics.unprofitableTotal.inc({ origin_chain: String(originChainId), dest_chain: String(destinationChainId) });
         profitClient.captureUnprofitableFill(deposit, realizedLpFeePct, relayerFeePct, gasCost);
 
         if (destinationChainId !== CHAIN_IDs.SOLANA) {
           const relayKey = sdkUtils.getRelayEventKey(deposit);
           this.ignoredDeposits[relayKey] = true;
         }
+      } else {
+        metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "shortfall" });
       }
       return;
     }
@@ -809,6 +817,7 @@ export class Relayer {
 
     // Ensure that a limit was identified, and that no upper thresholds would be breached by filling this deposit.
     if (this.originChainOvercommitted(originChainId, fillAmountUsd, limitIdx)) {
+      metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "overcommitted" });
       const limits = this.fillLimits[originChainId].slice(limitIdx);
       this.logger.debug({
         at: "Relayer::evaluateFill",
@@ -828,6 +837,15 @@ export class Relayer {
     tokenClient.decrementLocalBalance(destinationChainId, outputToken, outputAmount);
 
     const gasLimit = isMessageEmpty(resolveDepositMessage(deposit)) ? undefined : _gasLimit;
+
+    // Record fill metrics.
+    metrics.depositsEvaluated.inc({ dest_chain: String(destinationChainId), result: "filled" });
+    const fillUsdValue = Number(fillAmountUsd.toString()) / 1e18;
+    metrics.fillsAmountUsd.observe(
+      { origin_chain: String(originChainId), dest_chain: String(destinationChainId) },
+      fillUsdValue
+    );
+
     this.fillRelay(deposit, repaymentChainId, realizedLpFeePct, totalUserFeePct, gasPrice, gasLimit);
   }
 
@@ -942,6 +960,13 @@ export class Relayer {
     const allUnfilledDeposits = Object.values(unfilledDeposits)
       .flat()
       .map(({ deposit }) => deposit);
+
+    // Record per-origin-chain deposit counts.
+    for (const [chainId, deposits] of Object.entries(unfilledDeposits)) {
+      if (deposits.length > 0) {
+        metrics.depositsSeen.inc({ origin_chain: chainId }, deposits.length);
+      }
+    }
 
     this.logger.debug({
       at: "Relayer::checkForUnfilledDepositsAndFill",
@@ -1090,7 +1115,11 @@ export class Relayer {
       );
     };
 
-    this.logger.debug({ at: "Relayer::requestSlowFill", message: "Enqueuing slow fill request.", deposit });
+    metrics.slowFillsTotal.inc({
+      origin_chain: String(originChainId),
+      dest_chain: String(destinationChainId),
+    });
+    this.logger.debug({ at: "Relayer::requestSlowFill", message: "Enqueuing slow fill request.", event_type: "slow_fill", deposit });
     if (isEVMSpokePoolClient(spokePoolClient)) {
       multiCallerClient.enqueueTransaction({
         chainId: destinationChainId,
@@ -1144,9 +1173,15 @@ export class Relayer {
     this.logger.debug({
       at: "Relayer::fillRelay",
       message: `Filling v3 deposit ${deposit.depositId.toString()} with repayment on ${repaymentChainId}.`,
+      event_type: "fill",
       deposit: convertRelayDataParamsToBytes32(deposit),
       repaymentChainId,
       realizedLpFeePct,
+    });
+    metrics.fillsSubmitted.inc({
+      origin_chain: String(deposit.originChainId),
+      dest_chain: String(deposit.destinationChainId),
+      token: deposit.outputToken.toString(),
     });
 
     const spokePoolClient = spokePoolClients[deposit.destinationChainId];

@@ -43,6 +43,7 @@
     "hardhat-deploy": "^0.11.34",
     "lodash": "^4.17.21",
     "minimist": "^1.2.8",
+    "prom-client": "^15.1.0",
     "redis4": "npm:redis@^4.1.0",
     "reflect-metadata": "^0.2.2",
     "superstruct": "^1.0.3",

@@ -18,6 +18,8 @@ import { constructRelayerClients } from "./RelayerClientHelper";
 import { InventoryClientState, isSpokePoolClientWithListener } from "../clients";
 import { updateSpokePoolClients } from "../common";
 import { RedisCacheInterface } from "../caching/RedisCache";
+import { MetricsServer } from "../custom/MetricsServer";
+import { metrics } from "../custom/metrics";
 config();
 let logger: winston.Logger;
 
@@ -55,6 +57,15 @@ export async function runRelayer(_logger: winston.Logger, baseSigner: Signer): P
   const { eventListener, externalListener, pollingDelay } = config;
 
   const loop = pollingDelay > 0;
+
+  // Start metrics/health HTTP server.
+  const metricsPort = Number(process.env.METRICS_PORT ?? 9090);
+  const metricsEnabled = process.env.METRICS_ENABLED !== "false";
+  let metricsServer: MetricsServer | undefined;
+  if (metricsEnabled) {
+    metricsServer = new MetricsServer({ port: metricsPort, logger, pollingDelay: pollingDelay || 60 });
+    metricsServer.start();
+  }
 
   const redis = await getRedisCache(logger);
   let activeRelayerUpdated = false;
@@ -107,8 +118,16 @@ export async function runRelayer(_logger: winston.Logger, baseSigner: Signer): P
       if (loop) {
         logger.debug({ at: "relayer#run", message: `Starting relayer execution loop ${run}.` });
       }
+      metrics.loopTotal.inc();
       const tLoopStart = profiler.start("Relayer execution loop");
       const ready = await relayer.update();
+
+      // Update chain sync gauges.
+      const allChains = Object.values(spokePoolClients);
+      const syncedCount = allChains.filter(({ isUpdated }) => isUpdated).length;
+      for (const { chainId, isUpdated } of allChains) {
+        metrics.chainSynced.set({ chain_id: String(chainId) }, isUpdated ? 1 : 0);
+      }
       const activeRelayer = redis ? await redis.get(botIdentifier) : undefined;
 
       // If there is another active relayer, allow up to maxStartupDelay seconds for this instance to be ready.
@@ -178,6 +197,11 @@ export async function runRelayer(_logger: winston.Logger, baseSigner: Signer): P
           message: "Completed relayer execution loop.",
           loopCount: run,
         });
+        // Record loop metrics.
+        const loopDurationSec = runTimeMilliseconds / 1000;
+        metrics.loopDuration.observe(loopDurationSec);
+        metrics.loopLastCompletedAt.set(Date.now());
+        metricsServer?.recordLoopCompleted(syncedCount, allChains.length, runTimeMilliseconds);
         if (!abortController.signal.aborted) {
           const runTime = Math.round(runTimeMilliseconds / 1000);
 
@@ -205,6 +229,7 @@ export async function runRelayer(_logger: winston.Logger, baseSigner: Signer): P
       }
     }
   } finally {
+    metricsServer?.stop();
     await disconnectRedisClients(logger);
 
     if (externalListener) {
