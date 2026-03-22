@@ -11,20 +11,15 @@ scrape_configs:
   - job_name: relayer
     journal:
       json: true
+      matches: _SYSTEMD_UNIT=across-relayer.service
       labels:
         job: relayer
-    relabel_configs:
-      - source_labels: ["__journal__systemd_unit"]
-        target_label: "unit"
     pipeline_stages:
-      - match:
-          selector: '{unit="across-relayer.service"}'
-          stages:
-            - json:
-                expressions:
-                  event_type: event_type
-                  at: at
-                  level: level
-            - labels:
-                event_type:
-                level:
+      - json:
+          expressions:
+            event_type: event_type
+            at: at
+            level: level
+      - labels:
+          event_type:
+          level:
