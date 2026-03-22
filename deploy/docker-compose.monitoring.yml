@@ -34,7 +34,7 @@ services:
   grafana:
     image: grafana/grafana:11.5.2
     ports:
-      - "3000:3000"
+      - "3200:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
