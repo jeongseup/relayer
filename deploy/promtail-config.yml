@@ -10,16 +10,29 @@ clients:
 scrape_configs:
   - job_name: relayer
     journal:
-      json: true
+      json: false
       matches: _SYSTEMD_UNIT=across-relayer.service
       labels:
         job: relayer
     pipeline_stages:
+      # journald에서 MESSAGE 필드 추출
       - json:
           expressions:
-            event_type: event_type
-            at: at
+            log_line: MESSAGE
+      # Winston JSON에서 label용 필드 추출
+      - json:
+          source: log_line
+          expressions:
             level: level
+            at: at
+            event_type: event_type
+            notificationPath: notificationPath
+      # label 등록 (저 카디널리티만)
       - labels:
-          event_type:
           level:
+          at:
+          event_type:
+          notificationPath:
+      # 본문은 Winston JSON 전체 (journald 메타데이터 제거)
+      - output:
+          source: log_line
