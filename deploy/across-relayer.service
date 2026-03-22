@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=radius
-WorkingDirectory=/home/radius/relayer-v3
-EnvironmentFile=/home/radius/relayer-v3/.env
-ExecStart=/home/radius/.nvm/versions/node/v22.18.0/bin/node ./dist/index.js --relayer --wallet secret
+User=admin
+WorkingDirectory=/home/admin/workspace/cmd
+EnvironmentFile=/home/admin/workspace/env/.env
+ExecStart=/home/admin/.local/node/bin/node ./dist/index.js --relayer --wallet privateKey
 Restart=always
 RestartSec=10
 StandardOutput=journal
