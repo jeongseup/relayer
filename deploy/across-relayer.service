@@ -5,8 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=admin
-WorkingDirectory=/home/admin/workspace/cmd
-EnvironmentFile=/home/admin/workspace/env/.env
+WorkingDirectory=/home/admin/relayer
+EnvironmentFile=/home/admin/relayer/.env
 ExecStart=/home/admin/.local/node/bin/node ./dist/index.js --relayer --wallet privateKey
 Restart=always
 RestartSec=10
