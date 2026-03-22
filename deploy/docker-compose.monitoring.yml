@@ -22,6 +22,8 @@ services:
 
   promtail:
     image: grafana/promtail:3.4.2
+    ports:
+      - "9080:9080"
     volumes:
       - ./promtail-config.yml:/etc/promtail/config.yml:ro
       - /var/log/journal:/var/log/journal:ro
@@ -35,14 +37,9 @@ services:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
-    restart: unless-stopped
-
-  alertmanager:
-    image: prom/alertmanager:v0.28.1
-    ports:
-      - "9093:9093"
     restart: unless-stopped
 
 volumes:
